@@ -1,0 +1,39 @@
+{
+  "name": "qono-desktop",
+  "productName": "Qono",
+  "version": "1.0.0",
+  "description": "Qono desktop app",
+  "author": "Qono",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:win": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "net.qono.desktop",
+    "productName": "Qono",
+    "directories": { "output": "release" },
+    "files": ["main.js", "preload.js"],
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.productivity",
+      "artifactName": "Qono-${version}.dmg"
+    },
+    "win": {
+      "target": ["nsis"],
+      "artifactName": "Qono-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Qono"
+    }
+  }
+}
