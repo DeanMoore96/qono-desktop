@@ -1,6 +1,9 @@
 name: Build Qono installers
 
-on: workflow_dispatch
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
