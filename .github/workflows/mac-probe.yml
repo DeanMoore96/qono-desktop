@@ -1,0 +1,10 @@
+name: Mac runner probe
+
+on: workflow_dispatch
+
+jobs:
+  probe:
+    runs-on: macos-14
+    steps:
+      - run: echo hello from macos
+      - run: sw_vers
