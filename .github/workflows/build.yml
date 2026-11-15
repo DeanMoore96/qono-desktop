@@ -9,45 +9,75 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            script: dist:mac
-          - os: windows-latest
-            script: dist:win
-    runs-on: ${{ matrix.os }}
+  build-windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install
-      - run: npm run ${{ matrix.script }}
+      - run: npm ci
+      - run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - uses: actions/upload-artifact@v4
         with:
-          name: qono-${{ matrix.os }}
+          name: qono-windows
           path: |
-            release/*.dmg
             release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
+
+  # A failure here (including the macos-14 runner limit, support ticket
+  # 4997291) must not block the Windows release. See docs/RELEASING.md.
+  build-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: npm run dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qono-mac
+          path: release/*.dmg
           if-no-files-found: error
 
   release:
-    needs: build
-    if: always()
+    needs: [build-windows, build-mac]
+    if: ${{ always() && needs.build-windows.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Read version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: qono-*
           merge-multiple: true
+      - name: Require Windows update artifacts
+        run: |
+          test -n "$(ls dist/Qono-Setup-*.exe)"
+          test -n "$(ls dist/Qono-Setup-*.exe.blockmap)"
+          test -f dist/latest.yml
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: Qono 1.0.0
-          body: Qono desktop installers for Mac and Windows.
-          files: dist/*
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Qono ${{ steps.version.outputs.version }}
+          body: Qono desktop installers. Windows builds include latest.yml and the blockmap for auto-update.
+          files: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+            dist/*.dmg
+          fail_on_unmatched_files: false

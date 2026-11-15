@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Qono</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #07070b; color: #f4f4f8; font-family: sans-serif; }
+      main { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+      h1 { font-size: 64px; margin: 0; letter-spacing: -0.04em; }
+      p { margin: 0; color: #a7a7b8; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Qono</h1>
+      <p id="state">Desktop shell</p>
+    </main>
+    <script>
+      window.ticks = 0;
+      setInterval(() => { window.ticks += 1; }, 200);
+    </script>
+  </body>
+</html>
