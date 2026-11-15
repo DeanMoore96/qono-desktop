@@ -2,11 +2,22 @@ name: Build Qono installers
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - cursor/windows-tray-autoupdate-4164
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      release:
+        description: Create a GitHub release from the built installers
+        type: boolean
+        default: false
 
+# Branch builds only upload artifacts. contents: write is granted on the
+# release job, and that job does not run for a branch push.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-windows:
@@ -17,9 +28,13 @@ jobs:
         with:
           node-version: "20"
       - run: npm ci
-      - run: npm run dist:win
+      - name: Build Windows installer
+        run: npm run dist:win -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # Do not publish. The default Actions token must not be visible to electron-builder.
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
       - uses: actions/upload-artifact@v4
         with:
           name: qono-windows
@@ -29,8 +44,8 @@ jobs:
             release/latest.yml
           if-no-files-found: error
 
-  # A failure here (including the macos-14 runner limit, support ticket
-  # 4997291) must not block the Windows release. See docs/RELEASING.md.
+  # macos-14 uses the macos-14-arm64-us-default runners. This account previously
+  # hit GitHub's new-account limit on that pool (support ticket 4997291).
   build-mac:
     runs-on: macos-14
     steps:
@@ -39,18 +54,26 @@ jobs:
         with:
           node-version: "20"
       - run: npm ci
-      - run: npm run dist:mac
+      - name: Build Mac installer
+        run: npm run dist:mac -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
       - uses: actions/upload-artifact@v4
         with:
-          name: qono-mac
+          name: qono-mac-dmg
           path: release/*.dmg
           if-no-files-found: error
 
   release:
     needs: [build-windows, build-mac]
-    if: ${{ always() && needs.build-windows.result == 'success' }}
+    # Never on a branch push, including cursor/windows-tray-autoupdate-4164.
+    # A release is created only from a vX.Y.Z tag, or from a manual dispatch
+    # with the release input turned on.
+    if: ${{ always() && needs.build-windows.result == 'success' && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.release)) }}
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
