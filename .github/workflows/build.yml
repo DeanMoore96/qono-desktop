@@ -29,10 +29,12 @@ jobs:
           node-version: "20"
       - run: npm ci
       - name: Build Windows installer
-        run: npm run dist:win -- --publish never
+        # dist:win is electron-builder --win nsis --publish never.
+        # Do not append another --publish; a repeated flag is parsed as an array and
+        # electron-builder then tries to publish.
+        run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          # Do not publish. The default Actions token must not be visible to electron-builder.
           GH_TOKEN: ""
           GITHUB_TOKEN: ""
       - uses: actions/upload-artifact@v4
@@ -55,7 +57,8 @@ jobs:
           node-version: "20"
       - run: npm ci
       - name: Build Mac installer
-        run: npm run dist:mac -- --publish never
+        # dist:mac is electron-builder --mac dmg --publish never.
+        run: npm run dist:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           GH_TOKEN: ""
