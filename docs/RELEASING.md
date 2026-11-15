@@ -16,9 +16,12 @@ points at GitHub, also writes the update metadata (it does not upload anything;
 A push to a branch, including `cursor/windows-tray-autoupdate-4164`, only
 uploads the installer as a workflow artifact. Both platform builds pass
 `--publish never` and do not receive `GH_TOKEN`. The workflow creates the
-GitHub release (tag `vX.Y.Z` plus `latest.yml`, the blockmap, and the
-installer) only from a `v*.*.*` tag push, or from a manual run with the
-release input turned on. The installed app checks that release on startup
+GitHub release (tag `vX.Y.Z` plus `latest.yml`, the blockmap, the versioned
+installer, and a copy named `Qono-Setup.exe`) only from a `v*.*.*` tag push,
+or from a manual run with the release input turned on. The version-less name
+is the permanent download:
+`https://github.com/DeanMoore96/qono-desktop/releases/latest/download/Qono-Setup.exe`.
+The installed app checks that release on startup
 and about every four hours, downloads in the background, installs on Quit, and
 can restart from the tray item "Restart to update".
 

@@ -96,13 +96,17 @@ jobs:
           test -n "$(ls dist/Qono-Setup-*.exe)"
           test -n "$(ls dist/Qono-Setup-*.exe.blockmap)"
           test -f dist/latest.yml
+          # Stable name for https://github.com/DeanMoore96/qono-desktop/releases/latest/download/Qono-Setup.exe
+          cp dist/Qono-Setup-*.exe dist/Qono-Setup.exe
+          test -f dist/Qono-Setup.exe
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: Qono ${{ steps.version.outputs.version }}
           body: Qono desktop installers. Windows builds include latest.yml and the blockmap for auto-update.
           files: |
-            dist/*.exe
+            dist/Qono-Setup-*.exe
+            dist/Qono-Setup.exe
             dist/*.exe.blockmap
             dist/latest.yml
             dist/*.dmg
