@@ -12,7 +12,7 @@
     "url": "https://github.com/DeanMoore96/qono-desktop.git"
   },
   "scripts": {
-    "test": "node scripts/test-menu.js && node scripts/test-share-hook.js && node scripts/test-consent.js && node scripts/test-routes.js && node scripts/test-account-guard.js",
+    "test": "node scripts/test-menu.js && node scripts/test-share-hook.js && node scripts/test-consent.js && node scripts/test-routes.js && node scripts/test-account-guard.js && node scripts/test-sign-in.js",
     "dist:mac": "electron-builder --mac dmg --publish never",
     "dist:win": "electron-builder --win nsis --publish never"
   },
@@ -36,6 +36,8 @@
       "urls.js",
       "account-guard.js",
       "account-notice.html",
+      "sign-in.js",
+      "sign-in-store.js",
       "menu.js",
       "share-hook.js",
       "assets/**/*"

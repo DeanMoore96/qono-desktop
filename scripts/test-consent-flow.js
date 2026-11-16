@@ -100,7 +100,10 @@ const server = http.createServer((_req, res) => {
     assert.equal(stillBlocked.consentAccepted, false);
 
     await request(app, { cmd: "agree" });
-    const opened = await poll(app, (status) => status.url && status.url.includes("/voices"));
+    const opened = await poll(app, (status) => status.url && status.url.includes("/login"));
+    const openedUrl = new URL(opened.url);
+    assert.equal(openedUrl.pathname, "/login");
+    assert.equal(openedUrl.searchParams.get("from_url"), `http://127.0.0.1:${port}/voices`);
     assert.equal(opened.consentAccepted, true);
     assert.equal(opened.consentVisible, false);
 

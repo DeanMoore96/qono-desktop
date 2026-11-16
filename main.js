@@ -18,8 +18,21 @@ const { HIDDEN_ARG, buildMenuTemplate, loginItemOptions } = require("./menu");
 const { SHARE_PREFIX, shareHookSource, parseSharePayload } = require("./share-hook");
 const { hasValidConsent, writeConsent, clearConsent } = require("./consent-store");
 const { parseQonoLink, findQonoLink, classifyLink } = require("./routes");
-const { QONO_START_URL, startUrl, homeUrl, appUrl } = require("./urls");
+const { QONO_START_URL, startUrl, homeUrl, appOrigin, appUrl, manageAccountUrl } = require("./urls");
 const { isAccountBillingNavigation, ACCOUNT_NOTICE } = require("./account-guard");
+const { readSignIn, writeSignIn, clearSignIn } = require("./sign-in-store");
+const {
+  SIGN_IN_CHECK_MS,
+  SESSION_PARTITION,
+  AUTH_TOKEN_KEY,
+  isSignInCurrent,
+  isContinuingAuth,
+  isProtectedAppUrl,
+  isProtectedPath,
+  didSignIn,
+  loginUrlFor,
+  sessionOrigins,
+} = require("./sign-in");
 
 const APP_ID = "net.qono.desktop";
 const UPDATE_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -67,6 +80,9 @@ let logPath = null;
 let currentTemplate = [];
 let currentTooltip = "Qono";
 let currentIconFile = null;
+let awaitingSignIn = false;
+let signInInFlight = null;
+let sessionGeneration = 0;
 const shareCounts = new Map();
 
 function formatArg(value) {
@@ -178,6 +194,9 @@ function rebuildTrayMenu() {
     updateReady,
     onOpen: () => showMainWindow(),
     onPrivacy: () => showConsent({ review: consentAccepted() }),
+    onSignOut: () => {
+      signOut().catch((err) => log("error", "signOut", err));
+    },
     onManageAccount: () => openAccountInBrowser(),
     onQuit: () => beginQuit({ hard: false }),
     onCheck: () => checkForUpdates(),
@@ -219,10 +238,102 @@ function consentAccepted() {
   return hasValidConsent(consentDir());
 }
 
+function appSession() {
+  return session.fromPartition(SESSION_PARTITION);
+}
+
+function signInStillValid(now = Date.now()) {
+  const record = readSignIn(consentDir());
+  return isSignInCurrent(record && record.lastSignInAt, now);
+}
+
+function currentUrl() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const url = mainWindow.webContents.getURL();
+  if (!url || url === "about:blank") return null;
+  return url;
+}
+
+function currentReturnUrl() {
+  const current = currentUrl();
+  if (current) {
+    try {
+      const parsed = new URL(current);
+      if (isContinuingAuth(current, appHosts())) {
+        const back = parsed.searchParams.get("from_url") || parsed.searchParams.get("returnTo");
+        if (back) return back;
+      } else if (appHosts().includes(parsed.hostname)) {
+        return current;
+      }
+    } catch {
+      // Keep the default start URL.
+    }
+  }
+  if (pendingRoute && pendingRoute.kind === "page") return appUrl(pendingRoute.path);
+  return startUrl();
+}
+
+async function clearRemoteSession() {
+  const ses = appSession();
+  for (const origin of sessionOrigins(appOrigin())) {
+    try {
+      await ses.clearStorageData({ origin, storages: ["cookies", "localstorage"] });
+    } catch (err) {
+      log("warn", "clear storage", origin, err);
+    }
+  }
+}
+
+function forceSignIn(returnUrl, options = {}) {
+  if (signInInFlight) return signInInFlight;
+  awaitingSignIn = true;
+  const generation = ++sessionGeneration;
+  signInInFlight = (async () => {
+    log("info", "force-sign-in-begin", returnUrl || startUrl());
+    clearSignIn(consentDir());
+    await clearRemoteSession();
+    log("info", "force-sign-in-cleared", sessionGeneration);
+    if (generation !== sessionGeneration) return;
+    const login = loginUrlFor(returnUrl || startUrl());
+    log("info", "sign-in-required", login);
+    await openRemote(login, "sign-in", options);
+  })().finally(() => {
+    signInInFlight = null;
+  });
+  return signInInFlight;
+}
+
+function enforceSignIn({ show = true } = {}) {
+  if (!consentAccepted() || signInStillValid()) return null;
+  const current = currentUrl();
+  if (current && isContinuingAuth(current, appHosts())) return null;
+  return forceSignIn(currentReturnUrl(), { show });
+}
+
+async function signOut() {
+  awaitingSignIn = true;
+  sessionGeneration += 1;
+  clearSignIn(consentDir());
+  await clearRemoteSession();
+  if (!consentAccepted()) {
+    stopRemotePage();
+    showConsent({ review: false });
+    return;
+  }
+  await openRemote(loginUrlFor(startUrl()), "sign-in", { show: true });
+}
+
 function showMainWindow() {
   if (!consentAccepted()) {
     showConsent({ review: false });
     return;
+  }
+  if (!signInStillValid()) {
+    const current = currentUrl();
+    if (!current || !isContinuingAuth(current, appHosts())) {
+      forceSignIn(currentReturnUrl(), { show: true }).catch((err) => log("error", "forceSignIn", err));
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+    }
   }
   if (!mainWindow || mainWindow.isDestroyed()) {
     windowConcealed = false;
@@ -286,7 +397,7 @@ async function installShareExtension() {
     }),
   );
   try {
-    await session.defaultSession.loadExtension(dir, { allowFileAccess: true });
+    await appSession().loadExtension(dir, { allowFileAccess: true });
     shareHookMode = "extension";
   } catch (err) {
     shareHookMode = "console";
@@ -319,6 +430,39 @@ function watchShareMessages(win) {
   }
 }
 
+async function observeAuth(win) {
+  if (!win || win.isDestroyed()) return;
+  const url = win.webContents.getURL();
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (!appHosts().includes(parsed.hostname)) return;
+  const generation = sessionGeneration;
+  let token = "";
+  try {
+    token = await win.webContents.executeJavaScript(
+      `(() => { try { return localStorage.getItem(${JSON.stringify(AUTH_TOKEN_KEY)}) || ""; } catch (e) { return ""; } })()`,
+      true,
+    );
+  } catch (err) {
+    log("warn", "auth token read failed", err);
+    return;
+  }
+  if (generation !== sessionGeneration || win.isDestroyed()) return;
+  if (awaitingSignIn && didSignIn({ token, pageUrl: url })) {
+    writeSignIn(consentDir());
+    awaitingSignIn = false;
+    log("info", "sign-in-recorded", parsed.pathname);
+    return;
+  }
+  if (isProtectedPath(parsed.pathname) && !signInStillValid()) {
+    await forceSignIn(url);
+  }
+}
+
 async function createWindow({ show, url, intent }) {
   if (!consentAccepted()) {
     showConsent({ review: false });
@@ -337,6 +481,7 @@ async function createWindow({ show, url, intent }) {
     backgroundColor: "#07070b",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
+      partition: SESSION_PARTITION,
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
@@ -353,6 +498,21 @@ async function createWindow({ show, url, intent }) {
     if (decision === "protocol") {
       handleQonoLink(url);
       return { action: "deny" };
+    }
+    if (decision === "auth") {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          parent: win,
+          webPreferences: {
+            partition: SESSION_PARTITION,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            backgroundThrottling: false,
+          },
+        },
+      };
     }
     if (decision === "account") {
       openAccountUrl(url);
@@ -372,9 +532,18 @@ async function createWindow({ show, url, intent }) {
       handleQonoLink(url);
       return;
     }
-    if (decideNavigation(url) === "account") {
+    const decision = decideNavigation(url);
+    if (decision === "account") {
       event.preventDefault();
       openAccountUrl(url);
+      return;
+    }
+    // A sign-in in progress navigates from /login (or Google) to the return
+    // path before did-finish-load can record the token. Let that navigation
+    // finish; observeAuth sends it back to login if the token is missing.
+    if (decision !== "auth" && isProtectedAppUrl(url, appHosts()) && !signInStillValid() && !awaitingSignIn) {
+      event.preventDefault();
+      forceSignIn(url).catch((err) => log("error", "forceSignIn", err));
     }
   };
   win.webContents.on("will-navigate", blockAccountNavigation);
@@ -385,6 +554,15 @@ async function createWindow({ show, url, intent }) {
     event.preventDefault();
     concealWindow();
   });
+
+  const onReveal = () => {
+    const check = enforceSignIn({ show: false });
+    if (check && typeof check.catch === "function") {
+      check.catch((err) => log("error", "sign-in reveal", err));
+    }
+  };
+  win.on("show", onReveal);
+  win.on("restore", onReveal);
 
   let pageLoaded = false;
   const maybeSmokeReady = () => {
@@ -411,11 +589,17 @@ async function createWindow({ show, url, intent }) {
     sendSmokeReady();
   });
 
+  const watchAuth = () => {
+    observeAuth(win).catch((err) => log("warn", "auth observe", err));
+  };
   win.webContents.on("did-finish-load", () => {
     pageLoaded = true;
     log("info", "window-loaded", win.webContents.getURL());
+    watchAuth();
     maybeSmokeReady();
   });
+  win.webContents.on("did-navigate", watchAuth);
+  win.webContents.on("did-navigate-in-page", watchAuth);
 
   win.once("ready-to-show", () => {
     if (!windowConcealed) showMainWindow();
@@ -482,20 +666,26 @@ function stopRemotePage() {
   allowMainClose = false;
 }
 
-async function openRemote(url, intent) {
+async function openRemote(url, intent, { show = true } = {}) {
   if (!consentAccepted()) {
     showConsent({ review: false });
     return;
   }
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    await createWindow({ show: true, url, intent });
+  if (intent !== "sign-in" && !signInStillValid()) {
+    await forceSignIn(url, { show });
     return;
   }
-  windowConcealed = false;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    await createWindow({ show, url, intent });
+    return;
+  }
+  windowConcealed = !show;
   loadIntent = intent;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  if (show) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
   mainWindow.loadURL(url);
 }
 
@@ -558,6 +748,7 @@ function appHosts() {
 
 function decideNavigation(url) {
   if (classifyLink(url) === "in-app") return "protocol";
+  if (isContinuingAuth(url, appHosts())) return "auth";
   if (isAccountBillingNavigation(url, { appHosts: appHosts() })) return "account";
   return "app";
 }
@@ -572,14 +763,14 @@ function isAppPage(url) {
 }
 
 function openAccountUrl(url) {
-  const target = url || appUrl("/settings");
+  const target = url || manageAccountUrl();
   log("info", "account-external", target);
   shell.openExternal(target);
   showAccountNotice();
 }
 
 function openAccountInBrowser() {
-  openAccountUrl(appUrl("/settings"));
+  openAccountUrl(manageAccountUrl());
 }
 
 function showAccountNotice() {
@@ -636,9 +827,9 @@ function closeAccountNotice() {
 
 function installUserAgent() {
   const suffix = `QonoDesktop/${app.getVersion()}`;
-  const current = session.defaultSession.getUserAgent();
+  const current = appSession().getUserAgent();
   if (!current.includes(suffix)) {
-    session.defaultSession.setUserAgent(`${current} ${suffix}`);
+    appSession().setUserAgent(`${current} ${suffix}`);
   }
   log("info", "user-agent", suffix);
 }
@@ -773,6 +964,7 @@ function installSmokeHooks() {
         await acceptConsent();
         sendSmoke({ type: "status", id: msg.id, ...snapshot() });
       } catch (err) {
+        log("error", "consent-agree", err);
         sendSmoke({ type: "status", id: msg.id, error: String(err && err.message || err), ...snapshot() });
       }
       return;
@@ -868,7 +1060,7 @@ function startUpdater() {
 }
 
 function setupDisplayMedia() {
-  session.defaultSession.setDisplayMediaRequestHandler(
+  appSession().setDisplayMediaRequestHandler(
     async (_request, callback) => {
       const sources = await desktopCapturer.getSources({ types: ["screen", "window"] });
       callback({ video: sources[0] });
@@ -898,7 +1090,11 @@ async function start() {
   if (launchLink) {
     handleQonoLink(launchLink);
   } else if (consentAccepted()) {
-    await createWindow({ show: !shouldStartHidden(), url: startUrl(), intent: "start" });
+    if (signInStillValid()) {
+      await createWindow({ show: !shouldStartHidden(), url: startUrl(), intent: "start" });
+    } else {
+      await forceSignIn(startUrl(), { show: !shouldStartHidden() });
+    }
   } else if (!shouldStartHidden()) {
     showConsent({ review: false });
   } else {
@@ -906,6 +1102,12 @@ async function start() {
     sendSmokeReady();
   }
   startUpdater();
+  setInterval(() => {
+    const check = enforceSignIn({ show: true });
+    if (check && typeof check.catch === "function") {
+      check.catch((err) => log("error", "sign-in check", err));
+    }
+  }, SIGN_IN_CHECK_MS);
   if (!trayAvailable && process.env.QONO_SMOKE === "1") {
     sendSmokeReady();
   }
