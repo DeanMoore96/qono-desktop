@@ -19,7 +19,7 @@ function parseQonoLink(input) {
   if (key === "connect") return { kind: "page", path: "/connections" };
   if (key === "connect/chatgpt") return { kind: "page", path: "/connections?provider=openai" };
   if (key === "connect/claude") return { kind: "page", path: "/connections?provider=anthropic" };
-  if (key === "voices") return { kind: "page", path: "/settings/voice" };
+  if (key === "voices") return { kind: "page", path: "/voices" };
   return null;
 }
 

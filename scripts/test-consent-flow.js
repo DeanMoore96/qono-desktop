@@ -100,7 +100,7 @@ const server = http.createServer((_req, res) => {
     assert.equal(stillBlocked.consentAccepted, false);
 
     await request(app, { cmd: "agree" });
-    const opened = await poll(app, (status) => status.url && status.url.includes("/settings/voice"));
+    const opened = await poll(app, (status) => status.url && status.url.includes("/voices"));
     assert.equal(opened.consentAccepted, true);
     assert.equal(opened.consentVisible, false);
 

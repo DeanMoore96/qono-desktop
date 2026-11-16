@@ -58,7 +58,7 @@ Exact link mapping was an open question. The shell registers the `qono://` proto
 | `qono://connect` | `/connections` |
 | `qono://connect/chatgpt` | `/connections?provider=openai` |
 | `qono://connect/claude` | `/connections?provider=anthropic` |
-| `qono://voices` | `/settings/voice` |
+| `qono://voices` | `/voices` |
 
 A link that needs the website is held until consent is accepted, then the shell loads that path on qono.net. A second launch forwards the URL to the running instance. `https://` links still open in the default browser. ChatGPT maps to `provider=openai` and Claude to `provider=anthropic` only as this proposal.
 
