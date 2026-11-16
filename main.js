@@ -19,6 +19,7 @@ const { SHARE_PREFIX, shareHookSource, parseSharePayload } = require("./share-ho
 const { hasValidConsent, writeConsent, clearConsent } = require("./consent-store");
 const { parseQonoLink, findQonoLink, classifyLink } = require("./routes");
 const { QONO_START_URL, startUrl, homeUrl, appUrl } = require("./urls");
+const { isAccountBillingNavigation, ACCOUNT_NOTICE } = require("./account-guard");
 
 const APP_ID = "net.qono.desktop";
 const UPDATE_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -45,6 +46,8 @@ if (process.platform === "win32") {
 
 let mainWindow = null;
 let consentWindow = null;
+let accountNoticeWindow = null;
+let accountNoticeTimer = null;
 let pendingRoute = null;
 let pendingProtocolUrl = null;
 let allowMainClose = false;
@@ -175,6 +178,7 @@ function rebuildTrayMenu() {
     updateReady,
     onOpen: () => showMainWindow(),
     onPrivacy: () => showConsent({ review: consentAccepted() }),
+    onManageAccount: () => openAccountInBrowser(),
     onQuit: () => beginQuit({ hard: false }),
     onCheck: () => checkForUpdates(),
     onRestart: () => restartToUpdate(),
@@ -345,19 +349,36 @@ async function createWindow({ show, url, intent }) {
   win.webContents.setBackgroundThrottling(false);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (classifyLink(url) === "in-app") {
+    const decision = decideNavigation(url);
+    if (decision === "protocol") {
       handleQonoLink(url);
+      return { action: "deny" };
+    }
+    if (decision === "account") {
+      openAccountUrl(url);
+      return { action: "deny" };
+    }
+    if (isAppPage(url)) {
+      openRemote(url, "deep").catch((err) => log("error", "openRemote", err));
       return { action: "deny" };
     }
     shell.openExternal(url);
     return { action: "deny" };
   });
 
-  win.webContents.on("will-navigate", (event, url) => {
-    if (classifyLink(url) !== "in-app") return;
-    event.preventDefault();
-    handleQonoLink(url);
-  });
+  const blockAccountNavigation = (event, url) => {
+    if (classifyLink(url) === "in-app") {
+      event.preventDefault();
+      handleQonoLink(url);
+      return;
+    }
+    if (decideNavigation(url) === "account") {
+      event.preventDefault();
+      openAccountUrl(url);
+    }
+  };
+  win.webContents.on("will-navigate", blockAccountNavigation);
+  win.webContents.on("will-redirect", blockAccountNavigation);
 
   win.on("close", (event) => {
     if (isQuitting || allowMainClose || !trayAvailable) return;
@@ -521,6 +542,105 @@ function registerConsentIpc() {
   ipcMain.handle("qono-consent-close", () => {
     if (consentWindow && !consentWindow.isDestroyed()) consentWindow.close();
   });
+}
+
+function appHosts() {
+  const hosts = ["qono.net", "www.qono.net"];
+  if (process.env.QONO_URL) {
+    try {
+      hosts.push(new URL(process.env.QONO_URL).hostname);
+    } catch {
+      // Ignore a bad test override.
+    }
+  }
+  return hosts;
+}
+
+function decideNavigation(url) {
+  if (classifyLink(url) === "in-app") return "protocol";
+  if (isAccountBillingNavigation(url, { appHosts: appHosts() })) return "account";
+  return "app";
+}
+
+function isAppPage(url) {
+  try {
+    const parsed = new URL(url);
+    return appHosts().includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function openAccountUrl(url) {
+  const target = url || appUrl("/settings");
+  log("info", "account-external", target);
+  shell.openExternal(target);
+  showAccountNotice();
+}
+
+function openAccountInBrowser() {
+  openAccountUrl(appUrl("/settings"));
+}
+
+function showAccountNotice() {
+  log("info", "account-notice", ACCOUNT_NOTICE);
+  if (accountNoticeTimer) clearTimeout(accountNoticeTimer);
+  if (accountNoticeWindow && !accountNoticeWindow.isDestroyed()) {
+    accountNoticeWindow.showInactive();
+    accountNoticeTimer = setTimeout(() => closeAccountNotice(), 4500);
+    return;
+  }
+  accountNoticeWindow = new BrowserWindow({
+    width: 460,
+    height: 64,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    focusable: false,
+    show: false,
+    title: "Qono",
+    backgroundColor: "#1c1c27",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  const win = accountNoticeWindow;
+  win.setMenu(null);
+  win.on("closed", () => {
+    if (accountNoticeWindow === win) accountNoticeWindow = null;
+  });
+  win.once("ready-to-show", () => {
+    if (win.isDestroyed()) return;
+    const anchor = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : win.getBounds();
+    win.setPosition(
+      Math.round(anchor.x + (anchor.width - 460) / 2),
+      Math.round(anchor.y + anchor.height - 90),
+    );
+    win.showInactive();
+  });
+  win.loadFile(path.join(__dirname, "account-notice.html"));
+  accountNoticeTimer = setTimeout(() => closeAccountNotice(), 4500);
+}
+
+function closeAccountNotice() {
+  if (accountNoticeTimer) clearTimeout(accountNoticeTimer);
+  accountNoticeTimer = null;
+  if (accountNoticeWindow && !accountNoticeWindow.isDestroyed()) accountNoticeWindow.close();
+}
+
+function installUserAgent() {
+  const suffix = `QonoDesktop/${app.getVersion()}`;
+  const current = session.defaultSession.getUserAgent();
+  if (!current.includes(suffix)) {
+    session.defaultSession.setUserAgent(`${current} ${suffix}`);
+  }
+  log("info", "user-agent", suffix);
 }
 
 function registerProtocol() {
@@ -762,6 +882,7 @@ async function start() {
   log("info", "starting", app.getVersion(), process.platform, "packaged=" + app.isPackaged);
   installSmokeHooks();
   registerConsentIpc();
+  installUserAgent();
   setupDisplayMedia();
   await installShareExtension();
   try {

@@ -72,3 +72,21 @@ The Electron shell owns first-run consent. The per-model connect UI lives in the
 4. After consent, the shell loads qono.net. The site then runs onboarding in this order: the model-connect step (Connect ChatGPT, Connect Claude, and the other per-model buttons, each opt-in, each disconnectable), then the rest of the features. The shell does not connect to a model.
 5. Voice choice, the AI-voice disclosure in the product voice picker, and the ban on ChatGPT and Claude app voices are part of the web app. The consent window states that Qono uses OpenAI API voices, that the voice is AI-generated, and that Qono does not claim an OpenAI endorsement. The shell does not put a model name in the app title.
 6. After consent, the shell loads `QONO_START_URL` (`https://qono.net/connections?onboarding=1`). If that page fails to load, it falls back to `https://qono.net`. `QONO_URL` replaces the start URL for local tests.
+
+## Account and billing stay in the browser
+
+The desktop app has no account, billing, subscription, or credit-management controls. Using Qono stays in the app: the workspace, screen sharing and reading, on-screen actions and approvals, voice, instructions, model connect, voices, and consent. Only account settings, billing, subscriptions, checkout, and credit management open in the normal browser.
+
+The guard is an allowlist-safe blocklist in `account-guard.js`. A path on the interactive allowlist is never sent out. Only an explicit account or billing path on qono.net, or a Stripe or PayPal host, is opened with `shell.openExternal`. The shell then shows: "Account and billing open on qono.net in your browser."
+
+Live routes checked in `https://qono.net/assets/index-BhiPvuiP.js` on Nov 16, 2026: `/workspace`, `/connections`, `/settings`, `/members`, `/dashboard` (under `/_admin`), `/thank-you`, plus login and support pages. Checkout is not a site path. The bundle starts Stripe or PayPal checkout and assigns `window.location` to the returned redirect URL. No Wix pay domain is in the bundle. `/voices` is the voice page (Dean, Nov 16) even though that path is not in this bundle yet. `/instructions` is treated as in-app the same way.
+
+The tray has no account or billing controls. "Manage account on qono.net…" opens `https://qono.net/settings` in the browser.
+
+### User-agent contract
+
+The shell keeps the default Chromium user agent and appends one token:
+
+`QonoDesktop/<app version>`
+
+For this build that is `QonoDesktop/1.2.0`. The website can hide account and billing menus when the user agent contains `QonoDesktop/`. The shell still blocks those routes if a link is followed.

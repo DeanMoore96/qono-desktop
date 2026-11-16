@@ -8,6 +8,7 @@ function buildMenuTemplate({
   updateReady,
   onOpen,
   onPrivacy,
+  onManageAccount,
   onQuit,
   onCheck,
   onRestart,
@@ -16,6 +17,7 @@ function buildMenuTemplate({
   const template = [
     { label: "Open Qono", click: onOpen },
     { label: "Privacy & consent…", click: onPrivacy },
+    { label: "Manage account on qono.net…", click: onManageAccount },
     { type: "separator" },
   ];
 

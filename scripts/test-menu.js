@@ -7,6 +7,7 @@ function labels(options) {
   return buildMenuTemplate({
     onOpen() {},
     onPrivacy() {},
+    onManageAccount() {},
     onQuit() {},
     onCheck() {},
     onRestart() {},
@@ -20,6 +21,7 @@ function labels(options) {
 assert.deepEqual(labels({ platform: "win32", openAtLogin: false, updateReady: false }), [
   "Open Qono",
   "Privacy & consent…",
+  "Manage account on qono.net…",
   "Start with Windows",
   "Check for updates",
   "Quit",
@@ -28,6 +30,7 @@ assert.deepEqual(labels({ platform: "win32", openAtLogin: false, updateReady: fa
 assert.deepEqual(labels({ platform: "win32", openAtLogin: true, updateReady: true }), [
   "Open Qono",
   "Privacy & consent…",
+  "Manage account on qono.net…",
   "Start with Windows",
   "Check for updates",
   "Restart to update",
@@ -52,6 +55,7 @@ assert.equal(startup.checked, true);
 assert.deepEqual(labels({ platform: "darwin", openAtLogin: false, updateReady: true }), [
   "Open Qono",
   "Privacy & consent…",
+  "Manage account on qono.net…",
   "Start at Login",
   "Quit",
 ]);
@@ -59,6 +63,7 @@ assert.deepEqual(labels({ platform: "darwin", openAtLogin: false, updateReady: t
 assert.deepEqual(labels({ platform: "linux", openAtLogin: false, updateReady: true }), [
   "Open Qono",
   "Privacy & consent…",
+  "Manage account on qono.net…",
   "Quit",
 ]);
 
