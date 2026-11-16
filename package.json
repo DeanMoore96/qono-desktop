@@ -1,39 +1,74 @@
 {
   "name": "qono-desktop",
   "productName": "Qono",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Qono desktop app",
   "author": "Qono",
   "license": "UNLICENSED",
   "private": true,
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DeanMoore96/qono-desktop.git"
+  },
   "scripts": {
+    "test": "node scripts/test-menu.js && node scripts/test-share-hook.js && node scripts/test-consent.js && node scripts/test-routes.js && node scripts/test-account-guard.js",
     "dist:mac": "electron-builder --mac dmg --publish never",
     "dist:win": "electron-builder --win nsis --publish never"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0"
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "net.qono.desktop",
     "productName": "Qono",
-    "directories": { "output": "release" },
-    "files": ["main.js", "preload.js"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "consent-preload.js",
+      "consent.html",
+      "consent-store.js",
+      "routes.js",
+      "urls.js",
+      "account-guard.js",
+      "account-notice.html",
+      "menu.js",
+      "share-hook.js",
+      "assets/**/*"
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "DeanMoore96",
+      "repo": "qono-desktop"
+    },
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
+      "icon": "build/icon.png",
       "category": "public.app-category.productivity",
       "artifactName": "Qono-${version}.dmg"
     },
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico",
       "artifactName": "Qono-Setup-${version}.exe"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Qono"
+      "shortcutName": "Qono",
+      "include": "build/installer.nsh"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

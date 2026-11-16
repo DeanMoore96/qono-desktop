@@ -2,52 +2,113 @@ name: Build Qono installers
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - cursor/windows-tray-autoupdate-4164
+      - "release/**"
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      release:
+        description: Create a GitHub release from the built installers
+        type: boolean
+        default: false
 
+# Branch builds only upload artifacts. contents: write is granted on the
+# release job, and that job does not run for a branch push.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            script: dist:mac
-          - os: windows-latest
-            script: dist:win
-    runs-on: ${{ matrix.os }}
+  build-windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install
-      - run: npm run ${{ matrix.script }}
+      - run: npm ci
+      - name: Build Windows installer
+        # dist:win is electron-builder --win nsis --publish never.
+        # Do not append another --publish; a repeated flag is parsed as an array and
+        # electron-builder then tries to publish.
+        run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
       - uses: actions/upload-artifact@v4
         with:
-          name: qono-${{ matrix.os }}
+          name: qono-windows
           path: |
-            release/*.dmg
             release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
+
+  # macos-14 uses the macos-14-arm64-us-default runners. This account previously
+  # hit GitHub's new-account limit on that pool (support ticket 4997291).
+  build-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - name: Build Mac installer
+        # dist:mac is electron-builder --mac dmg --publish never.
+        run: npm run dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qono-mac-dmg
+          path: release/*.dmg
           if-no-files-found: error
 
   release:
-    needs: build
-    if: always()
+    needs: [build-windows, build-mac]
+    # Never on a branch push, including release/**.
+    # A release is created only from a vX.Y.Z tag, or from a manual dispatch
+    # with the release input turned on.
+    if: ${{ always() && needs.build-windows.result == 'success' && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.release)) }}
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Read version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: qono-*
           merge-multiple: true
+      - name: Require Windows update artifacts
+        run: |
+          test -n "$(ls dist/Qono-Setup-*.exe)"
+          test -n "$(ls dist/Qono-Setup-*.exe.blockmap)"
+          test -f dist/latest.yml
+          # Stable name for https://github.com/DeanMoore96/qono-desktop/releases/latest/download/Qono-Setup.exe
+          cp dist/Qono-Setup-*.exe dist/Qono-Setup.exe
+          test -f dist/Qono-Setup.exe
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: Qono 1.0.0
-          body: Qono desktop installers for Mac and Windows.
-          files: dist/*
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Qono ${{ steps.version.outputs.version }}
+          body: Qono desktop installers. Windows builds include latest.yml and the blockmap for auto-update.
+          files: |
+            dist/Qono-Setup-*.exe
+            dist/Qono-Setup.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+            dist/*.dmg
+          fail_on_unmatched_files: false
