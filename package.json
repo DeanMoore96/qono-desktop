@@ -12,7 +12,7 @@
     "url": "https://github.com/DeanMoore96/qono-desktop.git"
   },
   "scripts": {
-    "test": "node scripts/test-menu.js && node scripts/test-share-hook.js",
+    "test": "node scripts/test-menu.js && node scripts/test-share-hook.js && node scripts/test-consent.js && node scripts/test-routes.js",
     "dist:mac": "electron-builder --mac dmg --publish never",
     "dist:win": "electron-builder --win nsis --publish never"
   },
@@ -29,6 +29,11 @@
     "files": [
       "main.js",
       "preload.js",
+      "consent-preload.js",
+      "consent.html",
+      "consent-store.js",
+      "routes.js",
+      "urls.js",
       "menu.js",
       "share-hook.js",
       "assets/**/*"

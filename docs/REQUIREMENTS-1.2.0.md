@@ -46,7 +46,21 @@ Not allowed: voices from the ChatGPT app ([Service Terms §8](https://openai.com
 - [ ] The website copy matches the disclosures
 - [ ] Version bumped to 1.2.0, with no release or tag until Dean approves
 
-The version bump in this branch checks the last item only as a package version. The product behavior above is not built yet.
+The version bump in this branch checks the last item only as a package version. Desktop first-run consent, the post-consent connect URL, and `qono://` routing are implemented in the shell. Per-model buttons, the voice picker, and the website download disclosure are still the qono.net app, not this repository.
+
+## Proposed qono:// links (proposed, pending Dean)
+
+Exact link mapping was an open question. The shell registers the `qono://` protocol and uses this map until Dean confirms it:
+
+| Link | Opens |
+| --- | --- |
+| `qono://consent` | The local consent window (review if already accepted) |
+| `qono://connect` | `/connections` |
+| `qono://connect/chatgpt` | `/connections?provider=openai` |
+| `qono://connect/claude` | `/connections?provider=anthropic` |
+| `qono://voices` | `/settings/voice` |
+
+A link that needs the website is held until consent is accepted, then the shell loads that path on qono.net. A second launch forwards the URL to the running instance. `https://` links still open in the default browser. ChatGPT maps to `provider=openai` and Claude to `provider=anthropic` only as this proposal.
 
 ## Desktop implementation plan
 
@@ -56,4 +70,5 @@ The Electron shell owns first-run consent. The per-model connect UI lives in the
 2. Store the acceptance (and the disclosure version the user accepted) in the app's user data. A later change to the disclosure requires a new acceptance.
 3. Add a tray menu item to review the disclosure and to withdraw consent. Withdrawal clears the stored acceptance, hides or closes the Qono page, and shows the consent window again before the page can load.
 4. After consent, the shell loads qono.net. The site then runs onboarding in this order: the model-connect step (Connect ChatGPT, Connect Claude, and the other per-model buttons, each opt-in, each disconnectable), then the rest of the features. The shell does not connect to a model.
-5. Voice choice, the AI-voice disclosure, and the ban on ChatGPT and Claude app voices are part of the web app. The desktop shell does not ship or select those voices itself, and it does not add an endorsement or a model name to the app title.
+5. Voice choice, the AI-voice disclosure in the product voice picker, and the ban on ChatGPT and Claude app voices are part of the web app. The consent window states that Qono uses OpenAI API voices, that the voice is AI-generated, and that Qono does not claim an OpenAI endorsement. The shell does not put a model name in the app title.
+6. After consent, the shell loads `QONO_START_URL` (`https://qono.net/connections?onboarding=1`). If that page fails to load, it falls back to `https://qono.net`. `QONO_URL` replaces the start URL for local tests.

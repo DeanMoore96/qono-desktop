@@ -6,6 +6,7 @@ const { buildMenuTemplate, loginItemOptions } = require("../menu");
 function labels(options) {
   return buildMenuTemplate({
     onOpen() {},
+    onPrivacy() {},
     onQuit() {},
     onCheck() {},
     onRestart() {},
@@ -18,6 +19,7 @@ function labels(options) {
 
 assert.deepEqual(labels({ platform: "win32", openAtLogin: false, updateReady: false }), [
   "Open Qono",
+  "Privacy & consent…",
   "Start with Windows",
   "Check for updates",
   "Quit",
@@ -25,6 +27,7 @@ assert.deepEqual(labels({ platform: "win32", openAtLogin: false, updateReady: fa
 
 assert.deepEqual(labels({ platform: "win32", openAtLogin: true, updateReady: true }), [
   "Open Qono",
+  "Privacy & consent…",
   "Start with Windows",
   "Check for updates",
   "Restart to update",
@@ -36,6 +39,7 @@ const winMenu = buildMenuTemplate({
   openAtLogin: true,
   updateReady: false,
   onOpen() {},
+  onPrivacy() {},
   onQuit() {},
   onCheck() {},
   onRestart() {},
@@ -47,12 +51,14 @@ assert.equal(startup.checked, true);
 
 assert.deepEqual(labels({ platform: "darwin", openAtLogin: false, updateReady: true }), [
   "Open Qono",
+  "Privacy & consent…",
   "Start at Login",
   "Quit",
 ]);
 
 assert.deepEqual(labels({ platform: "linux", openAtLogin: false, updateReady: true }), [
   "Open Qono",
+  "Privacy & consent…",
   "Quit",
 ]);
 
@@ -91,6 +97,7 @@ buildMenuTemplate({
   openAtLogin: false,
   updateReady: false,
   onOpen() {},
+  onPrivacy() {},
   onQuit() {},
   onCheck() {},
   onRestart() {},

@@ -8,8 +8,10 @@ const os = require("node:os");
 const path = require("node:path");
 
 const electron = require("electron");
+const { writeConsent } = require("../consent-store");
 const root = path.join(__dirname, "..");
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "qono-smoke-"));
+writeConsent(userData);
 const page = fs.readFileSync(path.join(__dirname, "fixtures", "page.html"));
 
 function listen(server) {
@@ -123,7 +125,9 @@ const server = http.createServer((_req, res) => {
     assert.equal(ready.visible, true);
     assert.equal(ready.hooked, "extension");
     assert.ok(ready.menu.includes("Open Qono"));
+    assert.ok(ready.menu.includes("Privacy & consent…"));
     assert.ok(ready.menu.includes("Quit"));
+    assert.equal(ready.consentAccepted, true);
     assert.equal(ready.sharing, false);
     assert.equal(ready.tooltip, "Qono");
     assert.match(ready.url, /^http:\/\/127\.0\.0\.1:\d+\//);

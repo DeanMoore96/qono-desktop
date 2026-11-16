@@ -11,12 +11,15 @@ const {
   desktopCapturer,
   session,
   shell,
+  ipcMain,
 } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const { HIDDEN_ARG, buildMenuTemplate, loginItemOptions } = require("./menu");
 const { SHARE_PREFIX, shareHookSource, parseSharePayload } = require("./share-hook");
+const { hasValidConsent, writeConsent, clearConsent } = require("./consent-store");
+const { parseQonoLink, findQonoLink, classifyLink } = require("./routes");
+const { QONO_START_URL, startUrl, homeUrl, appUrl } = require("./urls");
 
-const APP_URL = process.env.QONO_URL || "https://qono.net";
 const APP_ID = "net.qono.desktop";
 const UPDATE_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const UPDATE_START_DELAY_MS = 15 * 1000;
@@ -41,6 +44,12 @@ if (process.platform === "win32") {
 }
 
 let mainWindow = null;
+let consentWindow = null;
+let pendingRoute = null;
+let pendingProtocolUrl = null;
+let allowMainClose = false;
+let loadIntent = "start";
+let fellBack = false;
 let tray = null;
 let trayAvailable = false;
 let windowConcealed = false;
@@ -165,6 +174,7 @@ function rebuildTrayMenu() {
     openAtLogin: readOpenAtLogin(),
     updateReady,
     onOpen: () => showMainWindow(),
+    onPrivacy: () => showConsent({ review: consentAccepted() }),
     onQuit: () => beginQuit({ hard: false }),
     onCheck: () => checkForUpdates(),
     onRestart: () => restartToUpdate(),
@@ -197,10 +207,22 @@ function isUserVisible() {
   return !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !windowConcealed);
 }
 
+function consentDir() {
+  return app.getPath("userData");
+}
+
+function consentAccepted() {
+  return hasValidConsent(consentDir());
+}
+
 function showMainWindow() {
+  if (!consentAccepted()) {
+    showConsent({ review: false });
+    return;
+  }
   if (!mainWindow || mainWindow.isDestroyed()) {
     windowConcealed = false;
-    createWindow({ show: true }).catch((err) => log("error", "createWindow", err));
+    createWindow({ show: true, url: startUrl(), intent: "start" }).catch((err) => log("error", "createWindow", err));
     return;
   }
   windowConcealed = false;
@@ -293,8 +315,13 @@ function watchShareMessages(win) {
   }
 }
 
-async function createWindow({ show }) {
+async function createWindow({ show, url, intent }) {
+  if (!consentAccepted()) {
+    showConsent({ review: false });
+    return;
+  }
   windowConcealed = !show;
+  loadIntent = intent || "start";
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 840,
@@ -318,12 +345,22 @@ async function createWindow({ show }) {
   win.webContents.setBackgroundThrottling(false);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (classifyLink(url) === "in-app") {
+      handleQonoLink(url);
+      return { action: "deny" };
+    }
     shell.openExternal(url);
     return { action: "deny" };
   });
 
+  win.webContents.on("will-navigate", (event, url) => {
+    if (classifyLink(url) !== "in-app") return;
+    event.preventDefault();
+    handleQonoLink(url);
+  });
+
   win.on("close", (event) => {
-    if (isQuitting || !trayAvailable) return;
+    if (isQuitting || allowMainClose || !trayAvailable) return;
     event.preventDefault();
     concealWindow();
   });
@@ -341,6 +378,13 @@ async function createWindow({ show }) {
 
   win.webContents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
     if (!isMainFrame || code === -3) return;
+    if (loadIntent === "start" && !fellBack && homeUrl() !== startUrl()) {
+      fellBack = true;
+      loadIntent = "home";
+      log("warn", "start url failed, opening", homeUrl(), code, description);
+      win.loadURL(homeUrl());
+      return;
+    }
     loadError = `${code} ${description} ${url}`;
     log("error", "did-fail-load", loadError);
     sendSmokeReady();
@@ -358,7 +402,137 @@ async function createWindow({ show }) {
   });
 
   watchShareMessages(win);
-  win.loadURL(APP_URL);
+  win.loadURL(url || startUrl());
+}
+
+function showConsent({ review }) {
+  const query = { mode: review ? "review" : "first" };
+  if (consentWindow && !consentWindow.isDestroyed()) {
+    consentWindow.loadFile(path.join(__dirname, "consent.html"), { query });
+    consentWindow.show();
+    consentWindow.focus();
+    return;
+  }
+  consentWindow = new BrowserWindow({
+    width: 760,
+    height: 820,
+    show: false,
+    title: "Qono",
+    backgroundColor: "#07070b",
+    autoHideMenuBar: true,
+    icon: windowIcon(),
+    webPreferences: {
+      preload: path.join(__dirname, "consent-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  const win = consentWindow;
+  win.setMenu(null);
+  win.on("closed", () => {
+    if (consentWindow === win) consentWindow = null;
+  });
+  win.once("ready-to-show", () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    sendSmokeReady();
+  });
+  win.webContents.on("did-finish-load", () => {
+    log("info", "consent-loaded", win.webContents.getURL());
+    if (!win.isDestroyed()) win.show();
+    sendSmokeReady();
+  });
+  win.webContents.on("did-fail-load", (_event, code, description, url) => {
+    log("error", "consent-failed", code, description, url);
+    sendSmokeReady();
+  });
+  win.loadFile(path.join(__dirname, "consent.html"), { query });
+}
+
+function stopRemotePage() {
+  shareCounts.clear();
+  setSharing(false);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const win = mainWindow;
+  allowMainClose = true;
+  mainWindow = null;
+  win.destroy();
+  allowMainClose = false;
+}
+
+async function openRemote(url, intent) {
+  if (!consentAccepted()) {
+    showConsent({ review: false });
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    await createWindow({ show: true, url, intent });
+    return;
+  }
+  windowConcealed = false;
+  loadIntent = intent;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.loadURL(url);
+}
+
+function handleQonoLink(raw) {
+  const route = parseQonoLink(raw);
+  if (!route) {
+    log("warn", "ignored qono link", raw);
+    return;
+  }
+  log("info", "qono-link", raw);
+  if (route.kind === "consent") {
+    showConsent({ review: consentAccepted() });
+    return;
+  }
+  if (!consentAccepted()) {
+    pendingRoute = route;
+    showConsent({ review: false });
+    return;
+  }
+  pendingRoute = null;
+  openRemote(appUrl(route.path), "deep").catch((err) => log("error", "openRemote", err));
+}
+
+function acceptConsent() {
+  writeConsent(consentDir());
+  const route = pendingRoute;
+  pendingRoute = null;
+  if (consentWindow && !consentWindow.isDestroyed()) consentWindow.close();
+  const url = route && route.kind === "page" ? appUrl(route.path) : startUrl();
+  return openRemote(url, route && route.kind === "page" ? "deep" : "start");
+}
+
+function withdrawConsent() {
+  clearConsent(consentDir());
+  pendingRoute = null;
+  stopRemotePage();
+  showConsent({ review: false });
+}
+
+function registerConsentIpc() {
+  ipcMain.handle("qono-consent-agree", () => acceptConsent());
+  ipcMain.handle("qono-consent-quit", () => beginQuit({ hard: false }));
+  ipcMain.handle("qono-consent-withdraw", () => withdrawConsent());
+  ipcMain.handle("qono-consent-close", () => {
+    if (consentWindow && !consentWindow.isDestroyed()) consentWindow.close();
+  });
+}
+
+function registerProtocol() {
+  if (process.env.QONO_SMOKE === "1") return;
+  try {
+    const registered = process.defaultApp
+      ? app.setAsDefaultProtocolClient("qono", process.execPath, [path.resolve(process.argv[1])])
+      : app.setAsDefaultProtocolClient("qono");
+    log("info", "protocol-qono", registered);
+  } catch (err) {
+    log("warn", "protocol registration failed", err);
+  }
 }
 
 function shouldStartHidden() {
@@ -389,7 +563,13 @@ function onSecondInstance(_event, argv) {
     beginQuit({ hard: true });
     return;
   }
-  showMainWindow();
+  const link = findQonoLink(argv);
+  if (link) {
+    if (app.isReady()) handleQonoLink(link);
+    else pendingProtocolUrl = link;
+    return;
+  }
+  if (app.isReady()) showMainWindow();
 }
 
 function snapshot() {
@@ -409,6 +589,8 @@ function snapshot() {
     menu,
     checks,
     url: mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.getURL() : null,
+    consentAccepted: consentAccepted(),
+    consentVisible: !!(consentWindow && !consentWindow.isDestroyed() && consentWindow.isVisible()),
     hooked: shareHookMode,
     loadError,
     destroyed: !mainWindow || mainWindow.isDestroyed(),
@@ -455,7 +637,10 @@ function installSmokeHooks() {
     }
     if (msg.cmd === "screenshot") {
       try {
-        const image = await mainWindow.webContents.capturePage();
+        const target = consentWindow && !consentWindow.isDestroyed() && consentWindow.isVisible()
+          ? consentWindow
+          : mainWindow;
+        const image = await target.webContents.capturePage();
         fs.writeFileSync(msg.path, image.toPNG());
         sendSmoke({ type: "screenshot", id: msg.id, ok: true });
       } catch (err) {
@@ -463,9 +648,35 @@ function installSmokeHooks() {
       }
       return;
     }
-    if (msg.cmd === "eval") {
+    if (msg.cmd === "agree") {
       try {
-        const result = await mainWindow.webContents.executeJavaScript(msg.code, true);
+        await acceptConsent();
+        sendSmoke({ type: "status", id: msg.id, ...snapshot() });
+      } catch (err) {
+        sendSmoke({ type: "status", id: msg.id, error: String(err && err.message || err), ...snapshot() });
+      }
+      return;
+    }
+    if (msg.cmd === "withdraw") {
+      withdrawConsent();
+      sendSmoke({ type: "status", id: msg.id, ...snapshot() });
+      return;
+    }
+    if (msg.cmd === "open-link") {
+      handleQonoLink(msg.url);
+      sendSmoke({ type: "status", id: msg.id, ...snapshot() });
+      return;
+    }
+    if (msg.cmd === "eval") {
+      const target = msg.target === "consent" || !mainWindow || mainWindow.isDestroyed()
+        ? consentWindow
+        : mainWindow;
+      log("info", "smoke-eval", msg.target || "main", !!(target && !target.isDestroyed()));
+      try {
+        const result = await Promise.race([
+          target.webContents.executeJavaScript(msg.code, true),
+          new Promise((_resolve, reject) => setTimeout(() => reject(new Error("eval timeout")), 3000)),
+        ]);
         sendSmoke({ type: "eval", id: msg.id, result });
       } catch (err) {
         sendSmoke({ type: "eval", id: msg.id, error: err instanceof Error ? err.message : String(err) });
@@ -550,6 +761,7 @@ async function start() {
   openLog();
   log("info", "starting", app.getVersion(), process.platform, "packaged=" + app.isPackaged);
   installSmokeHooks();
+  registerConsentIpc();
   setupDisplayMedia();
   await installShareExtension();
   try {
@@ -559,7 +771,19 @@ async function start() {
     log("error", "tray failed", err);
     if (process.env.QONO_SMOKE === "1") throw err;
   }
-  await createWindow({ show: !shouldStartHidden() });
+  log("info", "start-url-constant", QONO_START_URL);
+  const launchLink = pendingProtocolUrl || findQonoLink(process.argv);
+  pendingProtocolUrl = null;
+  if (launchLink) {
+    handleQonoLink(launchLink);
+  } else if (consentAccepted()) {
+    await createWindow({ show: !shouldStartHidden(), url: startUrl(), intent: "start" });
+  } else if (!shouldStartHidden()) {
+    showConsent({ review: false });
+  } else {
+    log("info", "hidden-without-consent");
+    sendSmokeReady();
+  }
   startUpdater();
   if (!trayAvailable && process.env.QONO_SMOKE === "1") {
     sendSmokeReady();
@@ -628,6 +852,12 @@ function main() {
     return;
   }
 
+  registerProtocol();
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    if (app.isReady()) handleQonoLink(url);
+    else pendingProtocolUrl = url;
+  });
   app.on("second-instance", onSecondInstance);
   app.on("before-quit", () => {
     isQuitting = true;

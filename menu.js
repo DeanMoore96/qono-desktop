@@ -7,12 +7,17 @@ function buildMenuTemplate({
   openAtLogin,
   updateReady,
   onOpen,
+  onPrivacy,
   onQuit,
   onCheck,
   onRestart,
   onLoginToggle,
 }) {
-  const template = [{ label: "Open Qono", click: onOpen }, { type: "separator" }];
+  const template = [
+    { label: "Open Qono", click: onOpen },
+    { label: "Privacy & consent…", click: onPrivacy },
+    { type: "separator" },
+  ];
 
   if (platform === "win32" || platform === "darwin") {
     template.push({
