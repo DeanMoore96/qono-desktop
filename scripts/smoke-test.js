@@ -126,6 +126,8 @@ const server = http.createServer((_req, res) => {
     assert.equal(ready.hooked, "extension");
     assert.ok(ready.menu.includes("Open Qono"));
     assert.ok(ready.menu.includes("Privacy & consent…"));
+    assert.ok(ready.menu.includes("Sign out"));
+    assert.ok(ready.menu.includes("Manage account on qono.net…"));
     assert.ok(ready.menu.includes("Quit"));
     assert.equal(ready.consentAccepted, true);
     assert.equal(ready.sharing, false);

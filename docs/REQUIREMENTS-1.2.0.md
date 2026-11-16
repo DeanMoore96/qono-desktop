@@ -71,7 +71,7 @@ The Electron shell owns first-run consent. The per-model connect UI lives in the
 3. Add a tray menu item to review the disclosure and to withdraw consent. Withdrawal clears the stored acceptance, hides or closes the Qono page, and shows the consent window again before the page can load.
 4. After consent, the shell loads qono.net. The site then runs onboarding in this order: the model-connect step (Connect ChatGPT, Connect Claude, and the other per-model buttons, each opt-in, each disconnectable), then the rest of the features. The shell does not connect to a model.
 5. Voice choice, the AI-voice disclosure in the product voice picker, and the ban on ChatGPT and Claude app voices are part of the web app. The consent window states that Qono uses OpenAI API voices, that the voice is AI-generated, and that Qono does not claim an OpenAI endorsement. The shell does not put a model name in the app title.
-6. After consent, the shell loads `QONO_START_URL` (`https://qono.net/connections?onboarding=1`). If that page fails to load, it falls back to `https://qono.net`. `QONO_URL` replaces the start URL for local tests.
+6. After consent and a current sign-in, the shell loads `QONO_START_URL` (`https://qono.net/connections?onboarding=1`). If that page fails to load, it falls back to `https://qono.net`. `QONO_URL` replaces the start URL for local tests. When sign-in is missing or older than 24 hours, the shell loads the site login page first. See "24-hour sign-in" below.
 
 ## Account and billing stay in the browser
 
@@ -81,7 +81,7 @@ The guard is an allowlist-safe blocklist in `account-guard.js`. A path on the in
 
 Live routes checked in `https://qono.net/assets/index-BhiPvuiP.js` on Nov 16, 2026: `/workspace`, `/connections`, `/settings`, `/members`, `/dashboard` (under `/_admin`), `/thank-you`, plus login and support pages. Checkout is not a site path. The bundle starts Stripe or PayPal checkout and assigns `window.location` to the returned redirect URL. No Wix pay domain is in the bundle. `/voices` is the voice page (Dean, Nov 16) even though that path is not in this bundle yet. `/instructions` is treated as in-app the same way.
 
-The tray has no account or billing controls. "Manage account on qono.net…" opens `https://qono.net/settings` in the browser.
+The tray has no account or billing controls. "Manage account on qono.net…" opens `https://qono.net/members` in the browser. "Sign out" clears the qono.net session in the app and returns to the login page.
 
 ### User-agent contract
 
@@ -90,3 +90,21 @@ The shell keeps the default Chromium user agent and appends one token:
 `QonoDesktop/<app version>`
 
 For this build that is `QonoDesktop/1.2.0`. The website can hide account and billing menus when the user agent contains `QonoDesktop/`. The shell still blocks those routes if a link is followed.
+
+## 24-hour sign-in
+
+Dean required the Windows app to demand a Qono account sign-in at least every 24 hours. The consent text and `CONSENT_VERSION` are unchanged. The package version stays `1.2.0`; the installer on the existing `v1.2.0` GitHub release is rebuilt from this work. Existing 1.2.0 installs do not auto-update, because the version number did not change.
+
+After consent, the shell reads `userData/sign-in.json`. If `lastSignInAt` is missing or 24 hours or older, it clears cookies and localStorage for `https://qono.net`, `https://www.qono.net`, and `https://base44.app` (and the `QONO_URL` origin, when tests override it), then loads `/login` with `from_url` and `returnTo` set to the page the user was going to. The first destination after a new sign-in is `https://qono.net/connections?onboarding=1` unless a `qono://` link asked for another path.
+
+The check runs on launch, when the window is shown or restored from the tray, and every 5 minutes while the app is running. A protected page (`/workspace`, `/connections`, `/voices`, `/instructions`) is sent to login when the 24-hour record is not current. The Base44 site also enforces its own session.
+
+Signed-in detection uses the site's existing Base44 client state and does not change qono.net:
+
+- The marker is a non-empty `localStorage` key `base44_access_token` (Base44's `setToken()` / `im()` also copies it to `token`).
+- An OAuth return is also accepted when `access_token` is still in the query string.
+- The page must already have left `/login`, `/register`, `/forgot-password`, `/reset-password`, and `/mfa`. Those pages, `/api/apps/.../auth`, `accounts.google.com`, and `base44.app` stay inside the app window.
+- The shell then sets `lastSignInAt` to that moment. Later page views do not extend it.
+- The remote page uses the persistent Electron partition `persist:qono`, so the site session survives restarts until the 24-hour gate or Sign out clears it.
+
+Login, signup, password reset, and Google OAuth stay in the app. A still-valid Google cookie is not cleared, so Google may skip its own password prompt; the qono.net token is cleared, and the app stays on the Qono login page until a new `base44_access_token` is stored. If storage cannot be cleared, a leftover token on a non-auth page can be recorded as a new sign-in.
