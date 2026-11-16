@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - cursor/windows-tray-autoupdate-4164
+      - "release/**"
     tags:
       - "v*.*.*"
   workflow_dispatch:
@@ -71,7 +72,7 @@ jobs:
 
   release:
     needs: [build-windows, build-mac]
-    # Never on a branch push, including cursor/windows-tray-autoupdate-4164.
+    # Never on a branch push, including release/**.
     # A release is created only from a vX.Y.Z tag, or from a manual dispatch
     # with the release input turned on.
     if: ${{ always() && needs.build-windows.result == 'success' && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.release)) }}
